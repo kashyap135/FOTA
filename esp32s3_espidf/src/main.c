@@ -69,7 +69,7 @@ static void wifi_event_handler(void *arg,esp_event_base_t event_base,int32_t eve
 
             ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
             printf("GOt IP address! "IPSTR" \n",IP2STR(&event->ip_info.ip));
-            vTaskDelay(pdMS_TO_TICKS(5000));
+            vTaskDelay(pdMS_TO_TICKS(10000));
             xTaskNotifyGive(http_task_handle);
         }
     }
