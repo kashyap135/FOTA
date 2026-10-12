@@ -66,17 +66,25 @@ esp_err_t firmware_download_and_install(
 
     //sha256 verification
 
-    for (size_t i=0;i<64;i++){
-        char c=update->sha256[i];
+    size_t len = strlen(update->sha256);
 
-        if (!((c>='0' && c<= '9')
-        || (c>= 'a' && c<='f')||
-         (c>='A' && c<='F'))){
+if (len != 64) {
+    ESP_LOGE(TAG, "Invalid SHA256 length: %u (expected 64)",
+             (unsigned int)len);
+    return ESP_ERR_INVALID_ARG;
+}
 
-            ESP_LOGI(TAG,"Invalid SHA256 format");
-            return ESP_ERR_INVALID_ARG;
-         }
+for (size_t i = 0; i < len; i++) {
+    char c = update->sha256[i];
+
+    if (!((c >= '0' && c <= '9') ||
+          (c >= 'a' && c <= 'f') ||
+          (c >= 'A' && c <= 'F'))) {
+        ESP_LOGE(TAG, "Invalid SHA256 character at index %u: 0x%02X",
+                 (unsigned int)i, (unsigned char)c);
+        return ESP_ERR_INVALID_ARG;
     }
+}
 
         const esp_partition_t *partition=esp_ota_get_next_update_partition(NULL);
 
