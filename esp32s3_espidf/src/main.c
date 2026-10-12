@@ -83,7 +83,7 @@ while(1){
     //http setup
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     esp_http_client_config_t config = {
-    .url = "https://raw.githubusercontent.com/kashyap135/OTA/main/testfirmware/manifest.json",
+    .url = "https://raw.githubusercontent.com/kashyap135/FOTA/refs/heads/main/esp32s3_espidf/releases/manifest.json",
     .timeout_ms = 20000,
     .crt_bundle_attach = esp_crt_bundle_attach,
 };
