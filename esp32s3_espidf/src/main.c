@@ -74,118 +74,176 @@ static void wifi_event_handler(void *arg,esp_event_base_t event_base,int32_t eve
     }
 }
 
-void http_task(void *arg){
+
+void http_task(void *arg)
+{
     char buffer[512];
 
-    
-    
-while(1){
-    //http setup
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    esp_http_client_config_t config = {
-    .url = "https://raw.githubusercontent.com/kashyap135/FOTA/refs/heads/main/esp32s3_espidf/releases/manifest.json",
-    .timeout_ms = 20000,
-    .crt_bundle_attach = esp_crt_bundle_attach,
-};
+    while (1) {
 
-esp_http_client_handle_t client =
-    esp_http_client_init(&config);
-    if (client == NULL) {
-    printf("HTTP client init failed\n");
-    continue;
-}
+        // Wait until Wi-Fi has obtained an IP address
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-esp_err_t err = esp_http_client_open(client, 0);
+        esp_http_client_config_t config = {
+            .url = "https://raw.githubusercontent.com/kashyap135/FOTA/refs/heads/main/esp32s3_espidf/releases/manifest.json",
+            .timeout_ms = 20000,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+        };
 
-if (err != ESP_OK) {
-    printf("HTTP open failed: %s\n", esp_err_to_name(err));
-    int socket_errno = esp_http_client_get_errno(client);
+        esp_http_client_handle_t client = NULL;
+        esp_err_t err = ESP_FAIL;
 
-printf("HTTP open failed: %s\n", esp_err_to_name(err));
-printf("Socket errno: %d\n", socket_errno);
-    esp_http_client_cleanup(client);
-    continue;
-}
-int64_t content_length = esp_http_client_fetch_headers(client);
-int status = esp_http_client_get_status_code(client);
+        // Retry manifest connection: 2, 4, and 8 seconds
+        for (int attempt = 0; attempt < 4; attempt++) {
 
-if (status != 200 || content_length < 0) {
-    printf("Manifest request failed: HTTP %d\n", status);
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    continue;
-}
+            client = esp_http_client_init(&config);
 
-int len=esp_http_client_read(client,buffer,sizeof(buffer)-1);
+            if (client == NULL) {
+                printf("HTTP client init failed\n");
+                err = ESP_FAIL;
+            } else {
+                err = esp_http_client_open(client, 0);
 
-if (len <= 0) {
-    printf("Manifest read failed\n");
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    continue;
-}
+                if (err == ESP_OK) {
+                    printf("Manifest connection established\n");
+                    break;
+                }
 
-buffer[len] = '\0';
+                printf("Manifest connection attempt %d failed: %s\n",
+                       attempt + 1, esp_err_to_name(err));
 
-cJSON *root = cJSON_Parse(buffer);
+                printf("Socket errno: %d\n",
+                       esp_http_client_get_errno(client));
 
-if (root == NULL) {
-    printf("JSON parse failed\n");
-} else {
+                esp_http_client_cleanup(client);
+                client = NULL;
+            }
 
-    cJSON *version = cJSON_GetObjectItem(root, "version");
-    cJSON *firmware_url = cJSON_GetObjectItem(root, "firmware_url");
-    cJSON *sha256 = cJSON_GetObjectItem(root, "sha256");
+            if (attempt < 3) {
+                int delay_seconds = 2 << attempt;
 
-    if (!cJSON_IsString(version) ||
-    !cJSON_IsString(firmware_url) ||
-    !cJSON_IsString(sha256) ||
-    version->valuestring == NULL ||
-    firmware_url->valuestring == NULL ||
-    sha256->valuestring == NULL) {
+                printf("Retrying manifest request in %d seconds\n",
+                       delay_seconds);
 
-    printf("Invalid manifest fields\n");
-    cJSON_Delete(root);
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    continue;
-}
-
-    if (is_version_newer(version->valuestring)) {
-        ota_update_info_t update={0};
-
-        snprintf(update.firmware_url,sizeof(update.firmware_url),"%s",firmware_url->valuestring);
-
-        snprintf(update.sha256,sizeof(update.sha256),"%s",sha256->valuestring);
-
-        snprintf(update.version,sizeof(update.version),"%s",version->valuestring);
-
-        printf("New firmware available!\n");
-
-        if (xQueueOverwrite(ota_queue, &update) == pdPASS) {
-
-            printf("Update queued successfully\n");
+                vTaskDelay(pdMS_TO_TICKS(delay_seconds * 1000));
+            }
         }
-     } 
 
-     else {
+        if (client == NULL || err != ESP_OK) {
+            printf("Manifest connection failed after retries\n");
+            continue;
+        }
 
-        printf("Firmware is up to date.\n");
+        // Read HTTP response headers
+        int64_t content_length =
+            esp_http_client_fetch_headers(client);
+
+        int status = esp_http_client_get_status_code(client);
+
+        if (status != 200 || content_length < 0) {
+            printf("Manifest request failed: HTTP %d\n", status);
+
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            continue;
+        }
+
+        // Read manifest response
+        int len = esp_http_client_read(
+            client, buffer, sizeof(buffer) - 1);
+
+        if (len <= 0) {
+            printf("Manifest read failed\n");
+
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            continue;
+        }
+
+        buffer[len] = '\0';
+
+        cJSON *root = cJSON_Parse(buffer);
+
+        if (root == NULL) {
+            printf("JSON parse failed\n");
+        } else {
+
+            cJSON *version =
+                cJSON_GetObjectItem(root, "version");
+
+            cJSON *firmware_url =
+                cJSON_GetObjectItem(root, "firmware_url");
+
+            cJSON *sha256 =
+                cJSON_GetObjectItem(root, "sha256");
+
+            if (!cJSON_IsString(version) ||
+                !cJSON_IsString(firmware_url) ||
+                !cJSON_IsString(sha256) ||
+                version->valuestring == NULL ||
+                firmware_url->valuestring == NULL ||
+                sha256->valuestring == NULL) {
+
+                printf("Invalid manifest fields\n");
+
+                cJSON_Delete(root);
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                continue;
+            }
+
+            // Display running and available versions
+            printf("Current firmware version: %s\n",
+                   curr_version);
+
+            printf("Available firmware version: %s\n",
+                   version->valuestring);
+
+            if (is_version_newer(version->valuestring)) {
+
+                ota_update_info_t update = {0};
+
+                snprintf(update.firmware_url,
+                         sizeof(update.firmware_url), "%s",
+                         firmware_url->valuestring);
+
+                snprintf(update.sha256,
+                         sizeof(update.sha256), "%s",
+                         sha256->valuestring);
+
+                snprintf(update.version,
+                         sizeof(update.version), "%s",
+                         version->valuestring);
+
+                printf("New firmware available: %s\n",
+                       update.version);
+
+                if (xQueueOverwrite(ota_queue, &update) == pdPASS) {
+                    printf("Update queued successfully\n");
+                } else {
+                    printf("Failed to queue OTA update\n");
+                }
+            } else {
+                printf("Firmware is up to date.\n");
+            }
+
+            printf("Firmware URL: %s\n",
+                   firmware_url->valuestring);
+
+            printf("SHA256: %s\n",
+                   sha256->valuestring);
+
+            cJSON_Delete(root);
+        }
+
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+
+        // Delay before the next manifest check
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
 }
-    
 
-    printf("Version: %s\n", version->valuestring);
-    printf("Firmware URL: %s\n", firmware_url->valuestring);
-    printf("SHA256: %s\n", sha256->valuestring);
-
-    cJSON_Delete(root);
-}
-esp_http_client_close(client);
-esp_http_client_cleanup(client);
- vTaskDelay(pdMS_TO_TICKS(10000));
-}
-
-}
 
 
 
