@@ -15,7 +15,7 @@
 #include "wifi_config.h"
 #include "freertos/queue.h"
 
-#define curr_version "2.0.0"
+#define curr_version "0.0.0"  
 
 static TaskHandle_t http_task_handle = NULL;
 
