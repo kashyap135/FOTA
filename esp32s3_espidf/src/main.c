@@ -6,16 +6,18 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_http_client.h"
+#include "esp_app_desc.h"
 #include "nvs_flash.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "firmware_download.h"
 #include "ota_update_info.h"
+#include <errno.h>
+#include <limits.h>
 
 #include "wifi_config.h"
 #include "freertos/queue.h"
 
-#define curr_version "0.0.0"  
 
 static TaskHandle_t http_task_handle = NULL;
 
@@ -23,29 +25,78 @@ static TaskHandle_t http_task_handle = NULL;
 static QueueHandle_t ota_queue;
 
 
-bool is_version_newer(const char *remote_version){
-    int curr_major,curr_minor,curr_patch;
-    int remote_major,remote_minor,remote_patch;
-    if(sscanf(curr_version,"%d.%d.%d",&curr_major,&curr_minor,&curr_patch) !=3 ||
-    sscanf(remote_version,"%d.%d.%d",&remote_major,&remote_minor,&remote_patch) !=3){
+static bool parse_version(const char *version,
+                          unsigned long parts[3])
+{
+    if (version == NULL || version[0] == '\0') {
         return false;
     }
 
-    if (remote_major >curr_major){
-        return true;
+    const char *p = version;
+
+    for (int i = 0; i < 3; i++) {
+
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+
+        errno = 0;
+        char *end = NULL;
+
+        unsigned long value = strtoul(p, &end, 10);
+
+        if (errno == ERANGE || end == p) {
+            return false;
+        }
+
+        parts[i] = value;
+
+        if (i < 2) {
+            if (*end != '.') {
+                return false;
+            }
+
+            p = end + 1;
+        } else {
+            if (*end != '\0') {
+                return false;
+            }
+        }
     }
-    if(remote_major < curr_major)
-    return false;
 
-    if(remote_minor>curr_minor)
     return true;
-    if(remote_minor<curr_minor)
-    return false;
-    if(remote_patch>curr_patch)
-    return true;
+}
 
-    return false;
+/*
+ * Returns:
+ *   1  -> remote version is newer
+ *   0  -> versions are equal
+ *  -1  -> remote version is older
+ *  -2  -> invalid version string
+ */
+static int compare_versions(const char *current_version,
+                            const char *remote_version)
+{
+    unsigned long current[3];
+    unsigned long remote[3];
 
+    if (!parse_version(current_version, current) ||
+        !parse_version(remote_version, remote)) {
+        return -2;
+    }
+
+    for (int i = 0; i < 3; i++) {
+
+        if (remote[i] > current[i]) {
+            return 1;
+        }
+
+        if (remote[i] < current[i]) {
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 
@@ -79,6 +130,13 @@ static void wifi_event_handler(void *arg,esp_event_base_t event_base,int32_t eve
 void http_task(void *arg)
 {
     char buffer[512];
+
+const esp_app_desc_t *app_desc =
+    esp_app_get_description();
+
+const char *curr_version = app_desc->version;
+
+printf("Running firmware version: %s\n", curr_version);
 
     while (1) {
 
@@ -194,45 +252,55 @@ void http_task(void *arg)
             }
 
             // Display running and available versions
-            printf("Current firmware version: %s\n",
-                   curr_version);
+            // Display the running and available versions
+printf("Current firmware version: %s\n", curr_version);
+printf("Available firmware version: %s\n",
+       version->valuestring);
 
-            printf("Available firmware version: %s\n",
-                   version->valuestring);
+int version_result =
+    compare_versions(curr_version, version->valuestring);
 
-            if (is_version_newer(version->valuestring)) {
+if (version_result == 1) {
 
-                ota_update_info_t update = {0};
+    ota_update_info_t update = {0};
 
-                snprintf(update.firmware_url,
-                         sizeof(update.firmware_url), "%s",
-                         firmware_url->valuestring);
+    snprintf(update.firmware_url,
+             sizeof(update.firmware_url), "%s",
+             firmware_url->valuestring);
 
-                snprintf(update.sha256,
-                         sizeof(update.sha256), "%s",
-                         sha256->valuestring);
+    snprintf(update.sha256,
+             sizeof(update.sha256), "%s",
+             sha256->valuestring);
 
-                snprintf(update.version,
-                         sizeof(update.version), "%s",
-                         version->valuestring);
+    snprintf(update.version,
+             sizeof(update.version), "%s",
+             version->valuestring);
 
-                printf("New firmware available: %s\n",
-                       update.version);
+    printf("New firmware available: %s\n",
+           update.version);
 
-                if (xQueueOverwrite(ota_queue, &update) == pdPASS) {
-                    printf("Update queued successfully\n");
-                } else {
-                    printf("Failed to queue OTA update\n");
-                }
-            } else {
-                printf("Firmware is up to date.\n");
-            }
+    if (xQueueOverwrite(ota_queue, &update) == pdPASS) {
+        printf("Update queued successfully\n");
+    } else {
+        printf("Failed to queue OTA update\n");
+    }
 
-            printf("Firmware URL: %s\n",
-                   firmware_url->valuestring);
+} else if (version_result == 0) {
 
-            printf("SHA256: %s\n",
-                   sha256->valuestring);
+    printf("Firmware is already up to date. Skipping update.\n");
+
+} else if (version_result == -1) {
+
+    printf("Remote firmware is older than the running firmware. "
+           "Downgrade rejected.\n");
+
+} else {
+
+    printf("Invalid firmware version. Skipping update.\n");
+}
+
+printf("Firmware URL: %s\n", firmware_url->valuestring);
+printf("SHA256: %s\n", sha256->valuestring);
 
             cJSON_Delete(root);
         }

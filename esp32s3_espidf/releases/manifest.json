@@ -2,5 +2,5 @@
 {
   "version": "0.0.1",
   "firmware_url": "https://raw.githubusercontent.com/kashyap135/FOTA/main/esp32s3_espidf/releases/firmware.bin",
-  "sha256": "44E59359E69D5D35E63D54A71462E69CF762664B4CE946F59EFAF96D00C19B36"
+  "sha256": "7333BD31D0D9472D4CE5206EBF2F338ED1ACA641A06EC4D59699435B0878F38F"
 }
