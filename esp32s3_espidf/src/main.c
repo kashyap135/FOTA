@@ -220,6 +220,7 @@ printf("Running firmware version: %s\n", curr_version);
         }
 
         buffer[len] = '\0';
+        printf("Manifest received:\n%s\n", buffer);
 
         cJSON *root = cJSON_Parse(buffer);
 
@@ -343,7 +344,8 @@ if (err != ESP_OK) {
 void app_main()
 {
 
-   
+   printf("OTA_TEST");
+   printf( "Running OTA test firmware v0.0.3");
    esp_err_t ret;
    ret=nvs_flash_init();
     
