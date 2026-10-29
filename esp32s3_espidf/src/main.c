@@ -453,33 +453,12 @@ if (running != NULL) {
 
     ESP_ERROR_CHECK(ret);
 
-    bool self_test_passed = true;
-
-#ifdef OTA_ROLLBACK_TEST_FAIL
-    const esp_partition_t *test_partition =
-        esp_ota_get_running_partition();
-
-    esp_ota_img_states_t test_state;
-
-    if (test_partition != NULL &&
-        esp_ota_get_state_partition(
-            test_partition, &test_state) == ESP_OK &&
-        test_state == ESP_OTA_IMG_PENDING_VERIFY) {
-
-        ESP_LOGW("OTA_BOOT",
-                 "TEST MODE: deliberately failing pending OTA image");
-
-        self_test_passed = false;
-    }
-#endif
-
-ret = ota_rollback_validate_running_app(self_test_passed);
-
+    ret = ota_rollback_validate_running_app(true);
 if (ret != ESP_OK) {
-    printf("OTA startup validation failed: %s\n",
-           esp_err_to_name(ret));
-    abort();
-}
+        printf("OTA startup validation failed: %s\n",
+               esp_err_to_name(ret));
+        abort();
+    }
 
     printf("Startup checks passed. Firmware validated.\n");
     /* 2. Initialize network infrastructure. */
