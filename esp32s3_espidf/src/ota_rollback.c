@@ -20,20 +20,28 @@ esp_err_t ota_rollback_validate_running_app(bool self_test_passed){
     esp_ota_img_states_t image_state;
 
     esp_err_t err=esp_ota_get_state_partition(running_partition,&image_state);
+    ESP_LOGI(TAG, "State query result: %s",
+         esp_err_to_name(err));
 
-    if (err == ESP_ERR_NOT_FOUND){
-        ESP_LOGI(TAG,"no ota state recorded for this image " "(possibly factory firmware)");
+if (err == ESP_OK) {
+    ESP_LOGI(TAG, "OTA image state: %d", image_state);
+}
 
-        if (self_test_passed){
-            return ESP_OK;
-        }
+    if (err == ESP_ERR_NOT_FOUND ||
+    (err == ESP_ERR_NOT_SUPPORTED &&
+     running_partition->type == ESP_PARTITION_TYPE_APP &&
+     running_partition->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY)) {
 
-        ESP_LOGE(TAG,"self-test failed but this image is not " "in a rollback-pending state");
+    ESP_LOGI(TAG,
+             "Factory image or image without OTA state tracking");
 
-        return ESP_ERR_INVALID_STATE;
-
-
+    if (self_test_passed) {
+        return ESP_OK;
     }
+
+    ESP_LOGE(TAG, "Startup self-test failed");
+    return ESP_ERR_INVALID_STATE;
+}
 
     if (err!= ESP_OK){
         ESP_LOGE(TAG,"failed to read ota image state:%s",esp_err_to_name(err));

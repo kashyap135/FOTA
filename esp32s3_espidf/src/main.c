@@ -16,10 +16,11 @@
 #include "ota_update_info.h"
 #include <errno.h>
 #include <limits.h>
-
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "wifi_config.h"
 #include "freertos/queue.h"
-
+#include "esp_log.h"
 #include "ota_rollback.h"
 
 
@@ -27,6 +28,41 @@ static TaskHandle_t http_task_handle = NULL;
 
 
 static QueueHandle_t ota_queue;
+
+static const char *TAG = "OTA_CHECK";
+
+void print_ota_status(void)
+{
+    const esp_partition_t *running =
+        esp_ota_get_running_partition();
+
+    const esp_partition_t *boot =
+        esp_ota_get_boot_partition();
+
+    ESP_LOGI(TAG, "Running partition: %s",
+             running ? running->label : "NULL");
+
+    ESP_LOGI(TAG, "Boot partition: %s",
+             boot ? boot->label : "NULL");
+
+    const esp_partition_t *ota0 =
+        esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP,
+            ESP_PARTITION_SUBTYPE_APP_OTA_0,
+            NULL);
+
+    const esp_partition_t *ota1 =
+        esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP,
+            ESP_PARTITION_SUBTYPE_APP_OTA_1,
+            NULL);
+
+    ESP_LOGI(TAG, "ota_0: %s",
+             ota0 ? "Found" : "Missing");
+
+    ESP_LOGI(TAG, "ota_1: %s",
+             ota1 ? "Found" : "Missing");
+}
 
 
 static bool parse_version(const char *version,
@@ -349,6 +385,62 @@ if (err != ESP_OK) {
 void app_main(void)
 {
     esp_err_t ret;
+    printf("\n===== APP MAIN STARTED =====\n");
+fflush(stdout);
+ ESP_LOGE("DEBUG_BOOT", "APP MAIN REACHED - ERROR LEVEL TEST");
+print_ota_status();
+     // OTA boot diagnostics
+const esp_partition_t *running =
+    esp_ota_get_running_partition();
+
+if (running != NULL) {
+    ESP_LOGI("OTA_BOOT", "Running partition: %s", running->label);
+    ESP_LOGI("OTA_BOOT", "Partition address: 0x%lx",
+             (unsigned long)running->address);
+
+    esp_ota_img_states_t state;
+    esp_err_t err = esp_ota_get_state_partition(running, &state);
+
+    if (err == ESP_OK) {
+        ESP_LOGI("OTA_BOOT", "Image state: %d", (int)state);
+
+        switch (state) {
+            case ESP_OTA_IMG_NEW:
+                ESP_LOGI("OTA_BOOT", "State: NEW");
+                break;
+
+            case ESP_OTA_IMG_PENDING_VERIFY:
+                ESP_LOGW("OTA_BOOT", "State: PENDING_VERIFY");
+                break;
+
+            case ESP_OTA_IMG_VALID:
+                ESP_LOGI("OTA_BOOT", "State: VALID");
+                break;
+
+            case ESP_OTA_IMG_INVALID:
+                ESP_LOGE("OTA_BOOT", "State: INVALID");
+                break;
+
+            case ESP_OTA_IMG_ABORTED:
+                ESP_LOGE("OTA_BOOT", "State: ABORTED");
+                break;
+
+            case ESP_OTA_IMG_UNDEFINED:
+                ESP_LOGI("OTA_BOOT", "State: UNDEFINED");
+                break;
+
+            default:
+                ESP_LOGW("OTA_BOOT", "State: UNKNOWN");
+                break;
+        }
+    } else {
+        ESP_LOGW("OTA_BOOT", "Cannot read image state: %s",
+                 esp_err_to_name(err));
+    }
+} else {
+    ESP_LOGE("OTA_BOOT", "Unable to identify running partition");
+}
+
 
     /* 1. Initialize NVS, recovering if its stored data is incompatible. */
     ret = nvs_flash_init();
@@ -361,6 +453,14 @@ void app_main(void)
 
     ESP_ERROR_CHECK(ret);
 
+    ret = ota_rollback_validate_running_app(true);
+if (ret != ESP_OK) {
+        printf("OTA startup validation failed: %s\n",
+               esp_err_to_name(ret));
+        abort();
+    }
+
+    printf("Startup checks passed. Firmware validated.\n");
     /* 2. Initialize network infrastructure. */
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -436,6 +536,7 @@ void app_main(void)
         ESP_ERROR_CHECK(ESP_FAIL);
     }
 
+   
     /* 9. Start Wi-Fi. */
     ESP_ERROR_CHECK(esp_wifi_start());
 
@@ -444,15 +545,9 @@ void app_main(void)
      * If this is a pending OTA image, mark it valid and
      * cancel rollback. This does not test internet access.
      */
-    ret = ota_rollback_validate_running_app(true);
+    
 
-    if (ret != ESP_OK) {
-        printf("OTA startup validation failed: %s\n",
-               esp_err_to_name(ret));
-        abort();
-    }
-
-    printf("Startup checks passed. Firmware validated.\n");
+    
 
     /* 11. Start connecting; internet availability is not
        a condition for accepting the firmware image. */
