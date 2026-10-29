@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_wifi.h"
@@ -17,6 +19,8 @@
 
 #include "wifi_config.h"
 #include "freertos/queue.h"
+
+#include "ota_rollback.h"
 
 
 static TaskHandle_t http_task_handle = NULL;
@@ -341,73 +345,121 @@ if (err != ESP_OK) {
     }
 }
 
-void app_main()
+
+void app_main(void)
 {
+    esp_err_t ret;
 
-   printf("OTA_TEST");
-   printf( "Running OTA test firmware v0.0.3");
-   esp_err_t ret;
-   ret=nvs_flash_init();
-    
+    /* 1. Initialize NVS, recovering if its stored data is incompatible. */
+    ret = nvs_flash_init();
 
-    ret =esp_netif_init();
-    ret=esp_event_loop_create_default();
-
-   esp_netif_create_default_wifi_sta();
-
-   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-
-    esp_wifi_init(&cfg);
-    
-
-ota_queue=xQueueCreate(1,sizeof(ota_update_info_t));
-if(ota_queue==NULL){
-    printf("OTA queue creation failed");
-    return;
-}
-
-    
-
-if (xTaskCreate(http_task, "http_task", 8192, NULL, 5,
-                &http_task_handle) != pdPASS) {
-    printf("HTTP task creation failed\n");
-    return;
-}
-
-
-
-    if (xTaskCreate(
-        ota_task, "ota_task", 12288, NULL, 5,
-        NULL) != pdPASS) {
-    printf("OTA task creation failed\n");
-    return;
-}
-
-    esp_wifi_set_mode(WIFI_MODE_STA);
-
-wifi_config_t wifi_config = {
-    .sta = {
-        .ssid = WIFI_SSID,
-        .password = WIFI_PASSWORD
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
-};
 
-ret=esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-esp_event_handler_register(
-    WIFI_EVENT,
-    ESP_EVENT_ANY_ID,
-    &wifi_event_handler,
-    NULL
-);
-esp_event_handler_register(
-    IP_EVENT,
-    IP_EVENT_STA_GOT_IP,
-    &wifi_event_handler,
-    NULL
-);
-ret=esp_wifi_start();
+    ESP_ERROR_CHECK(ret);
 
-ret=esp_wifi_connect();
+    /* 2. Initialize network infrastructure. */
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-   
+    if (esp_netif_create_default_wifi_sta() == NULL) {
+        ESP_ERROR_CHECK(ESP_FAIL);
+    }
+
+    /* 3. Initialize the Wi-Fi driver. */
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+
+    /* 4. Configure Wi-Fi credentials. */
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASSWORD
+        }
+    };
+
+    ESP_ERROR_CHECK(
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_config)
+    );
+
+    /* 5. Register event handlers. */
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(
+            WIFI_EVENT,
+            ESP_EVENT_ANY_ID,
+            &wifi_event_handler,
+            NULL
+        )
+    );
+
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(
+            IP_EVENT,
+            IP_EVENT_STA_GOT_IP,
+            &wifi_event_handler,
+            NULL
+        )
+    );
+
+    /* 6. Create the OTA queue. */
+    ota_queue = xQueueCreate(1, sizeof(ota_update_info_t));
+
+    if (ota_queue == NULL) {
+        ESP_ERROR_CHECK(ESP_FAIL);
+    }
+
+    /* 7. Create the HTTP manifest-checking task. */
+    if (xTaskCreate(
+            http_task,
+            "http_task",
+            8192,
+            NULL,
+            5,
+            &http_task_handle
+        ) != pdPASS) {
+        ESP_ERROR_CHECK(ESP_FAIL);
+    }
+
+    /* 8. Create the OTA download/install task. */
+    if (xTaskCreate(
+            ota_task,
+            "ota_task",
+            12288,
+            NULL,
+            5,
+            NULL
+        ) != pdPASS) {
+        ESP_ERROR_CHECK(ESP_FAIL);
+    }
+
+    /* 9. Start Wi-Fi. */
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    /*
+     * 10. Local startup initialization succeeded.
+     * If this is a pending OTA image, mark it valid and
+     * cancel rollback. This does not test internet access.
+     */
+    ret = ota_rollback_validate_running_app(true);
+
+    if (ret != ESP_OK) {
+        printf("OTA startup validation failed: %s\n",
+               esp_err_to_name(ret));
+        abort();
+    }
+
+    printf("Startup checks passed. Firmware validated.\n");
+
+    /* 11. Start connecting; internet availability is not
+       a condition for accepting the firmware image. */
+    ret = esp_wifi_connect();
+
+    if (ret != ESP_OK) {
+        printf("Wi-Fi connection request failed: %s\n",
+               esp_err_to_name(ret));
+    }
 }
