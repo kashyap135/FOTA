@@ -18,39 +18,7 @@ static const char *TAG="OTA_DOWNLOAD";
 
 #define DOWNLOAD_BUFFER_SIZE 4096
 
-static void test_sha256(void)
-{
-    mbedtls_sha256_context ctx;
-    unsigned char digest[32];
-   
 
-    mbedtls_sha256_init(&ctx);
-
-    int start_ret = mbedtls_sha256_starts(&ctx, 0);
-    ESP_LOGI(TAG, "SHA start result: %d", start_ret);
-
-    if (start_ret == 0) {
-        int update_ret = mbedtls_sha256_update(
-            &ctx, (const unsigned char *)"abc", 3);
-
-        ESP_LOGI(TAG, "SHA update result: %d", update_ret);
-
-        if (update_ret == 0) {
-            int finish_ret = mbedtls_sha256_finish(&ctx, digest);
-
-            ESP_LOGI(TAG, "SHA finish result: %d", finish_ret);
-            ESP_LOG_BUFFER_HEX(TAG, digest, sizeof(digest));\
-
-
-            
-        }
-        
-    }
-
-    
-
-    mbedtls_sha256_free(&ctx);
-}
 
 esp_err_t firmware_download_and_install(
     const ota_update_info_t *update){
@@ -61,7 +29,7 @@ esp_err_t firmware_download_and_install(
             return ESP_ERR_INVALID_ARG;
         }
 
-        test_sha256();
+        
 
 
     //sha256 verification

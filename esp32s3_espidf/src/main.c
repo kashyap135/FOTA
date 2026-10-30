@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include "esp_err.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_wifi.h"
@@ -24,12 +25,45 @@
 #include "ota_rollback.h"
 
 
+#define SOAK_MS 30000
+
+
+static volatile bool     s_local_init_ok = false;
+static volatile uint32_t s_http_heartbeat = 0;
+static bool s_validated = false;
+
+
+
 static TaskHandle_t http_task_handle = NULL;
 
 
 static QueueHandle_t ota_queue;
 
 static const char *TAG = "OTA_CHECK";
+
+
+
+
+static void health_check_passed(void)
+{
+    if (s_validated) return;
+    if (ota_rollback_validate_running_app(true) == ESP_OK) {
+        s_validated = true;
+    }
+}
+
+static void health_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(SOAK_MS));
+
+    if (s_local_init_ok && s_http_heartbeat > 0) {
+        health_check_passed();
+    } else {
+        ota_rollback_validate_running_app(false);   // reboots into old image
+    }
+    vTaskDelete(NULL);
+}
+
 
 void print_ota_status(void)
 {
@@ -160,7 +194,7 @@ static void wifi_event_handler(void *arg,esp_event_base_t event_base,int32_t eve
 
             ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
             printf("GOt IP address! "IPSTR" \n",IP2STR(&event->ip_info.ip));
-            vTaskDelay(pdMS_TO_TICKS(10000));
+            //vTaskDelay(pdMS_TO_TICKS(10000));
             xTaskNotifyGive(http_task_handle);
         }
     }
@@ -179,9 +213,11 @@ const char *curr_version = app_desc->version;
 printf("Running firmware version: %s\n", curr_version);
 
     while (1) {
+        s_http_heartbeat++;
 
         // Wait until Wi-Fi has obtained an IP address
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(10000)); 
 
         esp_http_client_config_t config = {
             .url = "https://raw.githubusercontent.com/kashyap135/FOTA/refs/heads/main/esp32s3_espidf/releases/manifest.json",
@@ -292,6 +328,8 @@ printf("Running firmware version: %s\n", curr_version);
                 continue;
             }
 
+            
+
             // Display running and available versions
             // Display the running and available versions
 printf("Current firmware version: %s\n", curr_version);
@@ -387,7 +425,7 @@ void app_main(void)
     esp_err_t ret;
     printf("\n===== APP MAIN STARTED =====\n");
 fflush(stdout);
- ESP_LOGE("DEBUG_BOOT", "APP MAIN REACHED - ERROR LEVEL TEST");
+ 
 print_ota_status();
      // OTA boot diagnostics
 const esp_partition_t *running =
@@ -453,14 +491,12 @@ if (running != NULL) {
 
     ESP_ERROR_CHECK(ret);
 
-    ret = ota_rollback_validate_running_app(true);
-if (ret != ESP_OK) {
-        printf("OTA startup validation failed: %s\n",
-               esp_err_to_name(ret));
-        abort();
-    }
 
-    printf("Startup checks passed. Firmware validated.\n");
+    
+
+
+    
+
     /* 2. Initialize network infrastructure. */
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -552,6 +588,14 @@ if (ret != ESP_OK) {
     /* 11. Start connecting; internet availability is not
        a condition for accepting the firmware image. */
     ret = esp_wifi_connect();
+    s_local_init_ok = true;
+    vTaskDelay(pdMS_TO_TICKS(5000));
+abort();
+
+if (ota_rollback_is_pending()) {
+    ESP_LOGW(TAG, "Image pending verify; soak %d ms", SOAK_MS);
+    xTaskCreate(health_task, "health", 4096, NULL, 5, NULL);
+}
 
     if (ret != ESP_OK) {
         printf("Wi-Fi connection request failed: %s\n",

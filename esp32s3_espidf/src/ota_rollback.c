@@ -7,6 +7,15 @@
 
 static const char *TAG="OTA_ROLLBACK";
 
+bool ota_rollback_is_pending(void)
+{
+    const esp_partition_t *p = esp_ota_get_running_partition();
+    esp_ota_img_states_t s;
+    return p && esp_ota_get_state_partition(p, &s) == ESP_OK
+             && s == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+
 esp_err_t ota_rollback_validate_running_app(bool self_test_passed){
     const esp_partition_t *running_partition=esp_ota_get_running_partition();
     if (running_partition== NULL){

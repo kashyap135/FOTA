@@ -6,4 +6,7 @@
 
 esp_err_t ota_rollback_validate_running_app(bool self_test_passed);
 
+
+bool ota_rollback_is_pending(void);
+
 #endif
