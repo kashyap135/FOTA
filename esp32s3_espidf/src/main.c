@@ -589,8 +589,7 @@ if (running != NULL) {
        a condition for accepting the firmware image. */
     ret = esp_wifi_connect();
     s_local_init_ok = true;
-    vTaskDelay(pdMS_TO_TICKS(5000));
-abort();
+    
 
 if (ota_rollback_is_pending()) {
     ESP_LOGW(TAG, "Image pending verify; soak %d ms", SOAK_MS);
